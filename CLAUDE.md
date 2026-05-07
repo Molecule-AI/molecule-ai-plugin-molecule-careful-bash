@@ -63,7 +63,7 @@ careful_bash:
 ### Setup
 
 ```bash
-git clone https://github.com/Molecule-AI/molecule-ai-plugin-molecule-careful-bash.git
+git clone https://git.moleculesai.app/molecule-ai/molecule-ai-plugin-molecule-careful-bash.git
 cd molecule-ai-plugin-molecule-careful-bash
 
 # YAML validation
