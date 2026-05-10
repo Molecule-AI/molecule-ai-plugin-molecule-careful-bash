@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """PreToolUse:Bash — enforce careful-mode patterns on shell commands."""
+import re
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -44,7 +45,7 @@ def main() -> None:
             if "migrations" in cmd:
                 deny_pretooluse("careful-mode: rm -rf inside a migrations dir is REFUSED.")
             deny_pretooluse(f"careful-mode: rm -rf at filesystem root, HOME, or .git is REFUSED. Command: {cmd[:200]}")
-        if "/.git" in cmd:
+        if re.search(r"(^|\s)\.git(?:\s|$|/)", cmd):
             deny_pretooluse("careful-mode: rm -rf .git is REFUSED. Re-clone if you need a fresh repo.")
 
     # WARN list — log but allow
@@ -52,6 +53,54 @@ def main() -> None:
         warn_to_stderr("[careful-mode WARN] force-with-lease: safer than --force but still rewrites remote history.")
     if "gh pr close" in cmd or "gh issue close" in cmd:
         warn_to_stderr("[careful-mode WARN] closing a PR/issue is irreversible from this bot's standpoint. Confirm intent.")
+
+    # Token exfiltration — OFFSEC-002 / CRED-2
+    # Block direct reads of known token file paths
+    token_paths = [
+        ".gh_token",
+        ".git-credentials-cache",
+        ".auth_token",
+        "gh_token",
+        "git-credentials-cache",
+        ".auth-token",
+        ".claude/.gh_token",
+        "~/.gh_token",
+    ]
+    # Also block cat of any path containing token-like segments
+    if re.search(r"cat\s+.*(~|/home/[^/]+/)\S*(token|gh_token|git.credential|auth)", cmd, re.IGNORECASE):
+        deny_pretooluse(
+            "careful-mode: potential credential file read REFUSED. "
+            "Token files must not be read in the agent context. "
+            "Use platform-managed secrets instead."
+        )
+    if any(tok in cmd for tok in token_paths):
+        deny_pretooluse(
+            "careful-mode: token file read REFUSED. "
+            "Token files must not be read in the agent context. "
+            "Use platform-managed secrets instead."
+        )
+
+    # Block env | grep for secrets (common exfil staging pattern)
+    # Matches: env | grep token; env|grep -i API_KEY; env | grep secret
+    if re.search(r"env\s*\|\s*grep\s+(-i\s+)?(token|api_key|secret|auth|password|passwd)", cmd, re.IGNORECASE):
+        deny_pretooluse(
+            "careful-mode: env grep for secrets REFUSED. "
+            "Reading environment variables for secrets is not permitted in agent context."
+        )
+
+    # Block generic cat of potential credential file extensions or token-named files
+    if re.search(r"cat\s+.*(\.gh_token|\.git-credential|\.auth_token|auth_token|gh_token)", cmd, re.IGNORECASE):
+        deny_pretooluse(
+            "careful-mode: potential credential file read REFUSED. "
+            "Token files must not be read in the agent context."
+        )
+
+    # Block curl/wget exfiltration of credentials to external endpoints
+    if re.search(r"(curl|wget)\s+.*(Authorization|Bearer|token|key).*\s+>", cmd):
+        deny_pretooluse(
+            "careful-mode: credential exfiltration via redirect REFUSED. "
+            "Do not redirect credentials to external endpoints."
+        )
 
 
 if __name__ == "__main__":
